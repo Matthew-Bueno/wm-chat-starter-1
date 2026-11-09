@@ -13,7 +13,7 @@ const app = express();
 app.use(express.static("public"));
 
 // ---------- Station U: read JSON bodies ----------
-
+app.use(express.json());
 
 // ALREADY DONE: connects with your connectDB(), seeds with your seedDatabase(),
 // adds GET /api/status and POST /api/reset.
@@ -24,30 +24,147 @@ const db = await setUpChat(app, connectDB, seedDatabase);
 // Signs up a new user. 400 if the username breaks the rules, 409 if it's taken.
 // Everyone who signs up joins the West-MEC Lounge.
 app.post("/api/users", async (req, res) => {
-  res.status(501).json({ error: "POST /api/users is not built yet (Station U)" });
+  try {
+    const { username, displayName } = req.body;
+
+    if (!username || !/^[a-z0-9]{3,20}$/.test(username)) {
+      return res.status(400).json({
+        error: "A username is 3 to 20 lowercase letters, numbers, or database"
+      });
+    }
+
+    const user = {
+      _id: username,
+      displayName: displayName || username,
+      createdAt: new Date()
+    };
+
+    await db.collection("users").insertOne(user);
+
+    await db.collection("chats").updateOne(
+      { name: "West-MEC Lounge" },
+      { $addToSet: { members: username } }
+    );
+
+    res.status(201).json(user);
+
+  } catch (error) {
+    if (error.code === 11000) {
+      return res.status(409).json({
+        error: `The username ${username} is taken`
+      });
+    }
+
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // GET /api/users/:username: signs in. Sends back ONE user, or 404 if there's no one with that username.
 app.get("/api/users/:username", async (req, res) => {
-  res.status(501).json({ error: "GET /api/users/:username is not built yet (Station U)" });
+    try {
+    const username = req.params.username;
+
+    const user = await db.collection("users").findOne({
+      _id: username
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        error: `There is no user named ${username}`
+      });
+    }
+
+    res.json(user);
+
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // GET /api/users: sends back an array of every user, A to Z (the People list).
 app.get("/api/users", async (req, res) => {
-  res.status(501).json({ error: "GET /api/users is not built yet (Station U)" });
+    try {
+    const users = await db.collection("users")
+      .find({})
+      .sort({ _id: 1 })
+      .toArray();
+
+    res.json(users);
+
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // ---------- Day 3: Conversations ----------
 // GET /api/chats?user=alan: sends back every chat that user is a member of, newest first.
 app.get("/api/chats", async (req, res) => {
-  res.status(501).json({ error: "GET /api/chats is not built yet (Day 3)" });
+  try {
+    const username = req.query.user;
+
+    if (!username) {
+      return res.status(400).json({
+        error: "Say whose chats you want: /api/chats?user=yourname"
+      });
+    }
+
+    const chats = await db.collection("chats")
+      .find({ members: username })
+      .sort({ updatedAt: -1 })
+      .toArray();
+
+    res.json(chats);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // POST /api/chats/direct   body: { "from": "alan", "to": "maria" }
 // Opens a direct message between two people. Already have one? Sends that one back (200).
 // New one? 201. 400 if someone is missing or it's yourself, 404 if either user doesn't exist.
 app.post("/api/chats/direct", async (req, res) => {
-  res.status(501).json({ error: "POST /api/chats/direct is not built yet (Day 3)" });
+  try {
+    const { from, to } = req.body;
+
+    if (!from || !to || from === to) {
+      return res.status(400).json({
+        error: "You can't start a direct message with yourself"
+      });
+    }
+    const count = await db.collection("users").countDocuments({
+      _id: { $in: [from, to] }
+    });
+    if (count !== 2){
+      return res.status(404).json({
+        error: "Both people need to be users"
+      });
+    }
+    const existing = await db.collection("chats").findOne({
+      type: "direct",
+      members: { $all: [from, to] }
+    });
+    if (existing) {
+      return res.status(200).json(existing);
+    }
+    const now = new Date();
+
+    const chat = {
+      type: "direct",
+      members: [from, to],
+      createdBy: from,
+      createdAt: now,
+      updatedAt: now
+    };
+    const result = await db.collection("chats").insertOne(chat);
+
+    res.status(201).json({
+      _id: result.insertedId,
+      ...chat
+    });
+
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // POST /api/chats/group   body: { "from": "alan", "name": "Study Group", "members": ["maria", "jay"] }
