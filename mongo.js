@@ -9,7 +9,10 @@ const DB_NAME = "chatDB";
 // Gets the connection string, connects a MongoClient to it,
 // and gives back (a promise for) the chatDB database.
 export async function connectDB() {
-  throw new Error("connectDB() is not built yet (Station A)");
+  const uri = await getMongoURI();
+  const client = new MongoClient(uri);
+  await client.connect();
+  return client.db(DB_NAME);
 }
 
 // ---------- Station A: Set up the collections ----------
@@ -22,5 +25,36 @@ export async function seedDatabase(db) {
   const now = new Date();
   const welcome = "Welcome to WM Chat! Everyone who signs up joins the Lounge. Say hi!";
 
-  throw new Error("seedDatabase() is not built yet (Station A)");
+  // Check if the database already has users
+  if ((await users.countDocuments()) > 0) return;
+
+  // Insert the first user
+  await users.insertOne({
+    _id: "bot",
+    displayName: "WM Bot"
+  });
+
+  // Insert the first chat
+  const result = await chats.insertOne({
+    type: "group",
+    name: "West-MEC Lounge",
+    members: ["bot"],
+    createdAt: now,
+    updatedAt: now,
+    lastMessage: {
+      from: "bot",
+      text: welcome,
+      sentAt: now
+    }
+  });
+
+  // Insert the welcome message
+  await messages.insertOne({
+    chatId: result.insertedId,
+    from: "bot",
+    text: welcome,
+    sentAt: now
+  });
+
+  return true;
 }
