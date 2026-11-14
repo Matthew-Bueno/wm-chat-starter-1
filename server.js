@@ -174,7 +174,6 @@ app.post("/api/chats/group", async (req, res) => {
      try {
     const { from, name, members } = req.body || {};
 
-    // 1. Validate the form
     if (
       !from ||
       !name ||
@@ -187,10 +186,8 @@ app.post("/api/chats/group", async (req, res) => {
       });
     }
 
-    // 2. Combine the creator and other members, removing duplicates
     const allMembers = [...new Set([from, ...members])];
 
-    // 3. Check that everyone is a registered user
     const count = await db.collection("users").countDocuments({
       _id: { $in: allMembers }
     });
@@ -201,7 +198,6 @@ app.post("/api/chats/group", async (req, res) => {
       });
     }
 
-    // 4. Create the group
     const now = new Date();
 
     const group = {
@@ -213,10 +209,8 @@ app.post("/api/chats/group", async (req, res) => {
       updatedAt: now
     };
 
-    // 5. Save the group in MongoDB
     const result = await db.collection("chats").insertOne(group);
 
-    // 6. Return the new group
     res.status(201).json({
       _id: result.insertedId,
       ...group
@@ -232,14 +226,124 @@ app.post("/api/chats/group", async (req, res) => {
 // Sends back the chat's messages, oldest first. With after: only the ones sent after that time.
 // 400 bad id, 404 no chat, 403 if user isn't a member.
 app.get("/api/chats/:id/messages", async (req, res) => {
-  res.status(501).json({ error: "GET /api/chats/:id/messages is not built yet (Day 4)" });
+   try {
+    const id = req.params.id;
+    const user = req.query.user;
+    const after = req.query.after;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({
+        error: "Invalid chat ID"
+      });
+    }
+
+    const chatId = new ObjectId(id);
+
+    const chat = await db.collection("chats").findOne({
+      _id: chatId
+    });
+
+    if (!chat) {
+      return res.status(404).json({
+        error: "Chat not found"
+      });
+    }
+
+    if (!chat.members.includes(user)) {
+      return res.status(403).json({
+        error: "You must be a member to view these messages"
+      });
+    }
+
+    const filter = { chatId: chatId };
+
+    if (after) {
+      filter.sentAt = { $gt: new Date(after) };
+    }
+
+    const messages = await db.collection("messages")
+      .find(filter)
+      .sort({ sentAt: 1 })
+      .toArray();
+
+    res.json(messages);
+
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // POST /api/chats/:id/messages   body: { "from": "alan", "text": "hey!" }
 // Sends a message. Also saves it on the chat as lastMessage, so the chat list can show it.
 // 400 bad id or bad text, 404 no chat, 403 if from isn't a member.
 app.post("/api/chats/:id/messages", async (req, res) => {
-  res.status(501).json({ error: "POST /api/chats/:id/messages is not built yet (Day 4)" });
+    try {
+    const id = req.params.id;
+    const { from } = req.body || {};
+    const rawText = req.body?.text;
+    const text = typeof rawText === "string" ? rawText.trim() : "";
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({
+        error: "Invalid chat ID"
+      });
+    }
+
+    if (!text || text.length > 500) {
+      return res.status(400).json({
+        error: "A message is 1 to 500 characters"
+      });
+    }
+
+    const chatId = new ObjectId(id);
+
+    const chat = await db.collection("chats").findOne({
+      _id: chatId
+    });
+
+    if (!chat) {
+      return res.status(404).json({
+        error: "Chat not found"
+      });
+    }
+
+    if (!chat.members.includes(from)) {
+      return res.status(403).json({
+        error: "You must be a member to send messages"
+      });
+    }
+
+    const message = {
+      chatId: chatId,
+      from: from,
+      text: text,
+      sentAt: new Date()
+    };
+
+    const result = await db.collection("messages").insertOne(message);
+
+    await db.collection("chats").updateOne(
+      { _id: chatId },
+      {
+        $set: {
+          updatedAt: message.sentAt,
+          lastMessage: {
+            from: message.from,
+            text: message.text,
+            sentAt: message.sentAt
+          }
+        }
+      }
+    );
+
+    res.status(201).json({
+      _id: result.insertedId,
+      ...message
+    });
+
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // ---------- Day 3: Conversations (adding people) ----------
@@ -262,17 +366,14 @@ app.patch("/api/chats/:id/members", async (req, res) => {
     const id = req.params.id;
     const { by, username } = req.body;
 
-    // Step 1: Validate ID
     if (!ObjectId.isValid(id)) {
       return res.status(400).json({
         error: "Invalid chat ID"
       });
     }
 
-    // Step 2: Convert ID
     const chatId = new ObjectId(id);
 
-    // Step 3: Find chat
     const chat = await db.collection("chats").findOne({
       _id: chatId
     });
@@ -283,21 +384,18 @@ app.patch("/api/chats/:id/members", async (req, res) => {
       });
     }
 
-    // Step 4: Check if person adding is a member
     if (!chat.members.includes(by)) {
       return res.status(403).json({
         error: "You must be a member to add someone"
       });
     }
 
-    // Step 5: Check if it's a direct message
     if (chat.type === "direct") {
       return res.status(400).json({
         error: "A direct message is just for two. Start a group to add more people"
       });
     }
 
-    // Step 6: Check if the user exists
     const user = await db.collection("users").findOne({
       _id: username
     });
@@ -308,7 +406,6 @@ app.patch("/api/chats/:id/members", async (req, res) => {
       });
     }
 
-    // Step 7: Check if user is already in the chat
     if (chat.members.includes(username)) {
       return res.status(409).json({
         error: "User is already in this chat"
